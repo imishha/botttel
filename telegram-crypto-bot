@@ -1,0 +1,94 @@
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, ConversationHandler, MessageHandler, Filters
+import sqlite3
+from datetime import datetime
+
+# Состояния для ConversationHandler
+AMOUNT, METHOD, RATE, CONFIRM = range(4)
+
+# Инициализация базы данных
+def init_db():
+    conn = sqlite3.connect('crypto_exchange.db')
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS deals
+                 (id INTEGER PRIMARY KEY, amount REAL, method TEXT, rate REAL, status TEXT, date TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS settings
+                 (key TEXT PRIMARY KEY, value TEXT)''')
+    conn.commit()
+    conn.close()
+
+# Проверка прав администратора
+def is_admin(user_id):
+    admin_ids = [123456789]  # Замените на реальные ID администраторов
+    return user_id in admin_ids
+
+# Основное меню
+def main_menu(update: Update, context):
+    if not is_admin(update.effective_user.id):
+        update.message.reply_text("У вас нет доступа к этому боту.")
+        return
+
+    keyboard = [
+        [InlineKeyboardButton("Открыть калькулятор", callback_data='calculator')],
+        [InlineKeyboardButton("Открыть день", callback_data='open_day')],
+        [InlineKeyboardButton("Закрыть день", callback_data='close_day')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    update.message.reply_text("Выберите действие:", reply_markup=reply_markup)
+
+# Меню калькулятора
+def calculator_menu(update: Update, context):
+    keyboard = [
+        [InlineKeyboardButton("Добавить", callback_data='add')],
+        [InlineKeyboardButton("Изменить", callback_data='change')],
+        [InlineKeyboardButton("Выплата", callback_data='payout')],
+        [InlineKeyboardButton("Курс", callback_data='rate')],
+        [InlineKeyboardButton("Назад", callback_data='back_to_main')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    update.callback_query.message.edit_text("Калькулятор:", reply_markup=reply_markup)
+
+# Обработка добавления новой сделки
+def add_deal(update: Update, context):
+    update.callback_query.message.edit_text("Введите сумму в рублях:")
+    return AMOUNT
+
+def process_amount(update: Update, context):
+    context.user_data['amount'] = float(update.message.text)
+    keyboard = [
+        [InlineKeyboardButton("C2C", callback_data='c2c')],
+        [InlineKeyboardButton("Курьер", callback_data='courier')],
+        [InlineKeyboardButton("Комиссия", callback_data='commission')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    update.message.reply_text("Выберите метод:", reply_markup=reply_markup)
+    return METHOD
+
+# Основной обработчик команд
+def main():
+    updater = Updater("YOUR_BOT_TOKEN", use_context=True)
+    dp = updater.dispatcher
+
+    # Добавляем обработчики
+    dp.add_handler(CommandHandler("start", main_menu))
+    
+    # Conversation handler для добавления сделки
+    conv_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(add_deal, pattern='^add$')],
+        states={
+            AMOUNT: [MessageHandler(Filters.text & ~Filters.command, process_amount)],
+            METHOD: [CallbackQueryHandler(process_method)],
+            RATE: [CallbackQueryHandler(process_rate)],
+            CONFIRM: [CallbackQueryHandler(confirm_deal)]
+        },
+        fallbacks=[CommandHandler('cancel', cancel)]
+    )
+    dp.add_handler(conv_handler)
+
+    # Запускаем бота
+    updater.start_polling()
+    updater.idle()
+
+if __name__ == '__main__':
+    init_db()
+    main()
